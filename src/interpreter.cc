@@ -38,12 +38,6 @@ static const char* s_opcode_name[] = {
   "<invalid>",
 };
 
-#define CHECK_RESULT(expr)  \
-  do {                      \
-    if (WABT_FAILED(expr))  \
-      return Result::Error; \
-  } while (0)
-
 // Differs from CHECK_RESULT since it can return different traps, not just
 // Error. Also uses __VA_ARGS__ so templates can be passed without surrounding
 // parentheses.
@@ -98,6 +92,8 @@ Thread::Thread(Environment* env, const Options& options)
       value_stack_end_(value_stack_.data() + value_stack_.size()),
       call_stack_top_(call_stack_.data()),
       call_stack_end_(call_stack_.data() + call_stack_.size()),
+      catch_stack_top_(catch_stack_.data()),
+      catch_stack_end_(catch_stack_.data() + catch_stack_.size()),
       pc_(options.pc) {}
 
 FuncSignature::FuncSignature(Index param_count,
@@ -606,13 +602,20 @@ static WABT_INLINE uint64_t read_u64(const uint8_t** pc) {
   return result;
 }
 
-static WABT_INLINE void read_table_entry_at(const uint8_t* pc,
-                                            IstreamOffset* out_offset,
-                                            uint32_t* out_drop,
-                                            uint8_t* out_keep) {
+static WABT_INLINE void ReadTableEntryAt(const uint8_t* pc,
+                                         IstreamOffset* out_offset,
+                                         uint32_t* out_drop,
+                                         uint8_t* out_keep) {
   *out_offset = read_u32_at(pc + WABT_TABLE_ENTRY_OFFSET_OFFSET);
   *out_drop = read_u32_at(pc + WABT_TABLE_ENTRY_DROP_OFFSET);
   *out_keep = *(pc + WABT_TABLE_ENTRY_KEEP_OFFSET);
+}
+
+static WABT_INLINE void ReadTryEntryAt(const uint8_t* pc,
+                                       ExceptionTag* out_tag,
+                                       IstreamOffset* out_offset) {
+  *out_tag = read_u32_at(pc + WABT_TRY_ENTRY_TAG_OFFSET);
+  *out_offset = read_u32_at(pc + WABT_TRY_ENTRY_OFFSET_OFFSET);
 }
 
 Memory* Thread::ReadMemory(const uint8_t** pc) {
@@ -673,6 +676,41 @@ Result Thread::PushCall(const uint8_t* pc) {
 
 IstreamOffset Thread::PopCall() {
   return *--call_stack_top_;
+}
+
+Result Thread::PushCatch(ExceptionTag tag, IstreamOffset offset)  {
+  TRAP_IF(catch_stack_top_ >= catch_stack_end_, CatchStackExhausted);
+  *catch_stack_top_++ =
+      CatchBlock(tag, offset, value_stack_top_ - value_stack_.data(),
+                 call_stack_top_ - call_stack_.data());
+  return Result::Ok;
+}
+
+Result Thread::Unwind(ExceptionTag tag)  {
+  while (catch_stack_top_ > catch_stack_.data()) {
+    CatchBlock block = *--catch_stack_top_;
+    if (block.tag != tag && block.tag != kCatchAllTag)
+      continue;
+
+    // Found a matching tag.
+    pc_ = block.pc;
+    assert(value_stack_.data() + block.value_stack_top < value_stack_top_);
+    assert(call_stack_.data() + block.call_stack_top < call_stack_top_);
+    value_stack_top_ = value_stack_.data() + block.value_stack_top;
+    call_stack_top_ = call_stack_.data() + block.call_stack_top;
+    return Result::Ok;
+  }
+
+  pc_ = kInvalidIstreamOffset;
+  value_stack_top_ = value_stack_.data();
+  call_stack_top_ = call_stack_.data();
+  return Result::TrapUncaughtException;
+}
+
+void Thread::PopCatch(size_t count)  {
+  assert(count > 0);
+  assert(catch_stack_.data() + count >= catch_stack_top_);
+  catch_stack_top_ -= count;
 }
 
 template <typename MemType, typename ResultType>
@@ -1219,7 +1257,7 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
         IstreamOffset new_pc;
         uint32_t drop_count;
         uint8_t keep_count;
-        read_table_entry_at(entry, &new_pc, &drop_count, &keep_count);
+        ReadTableEntryAt(entry, &new_pc, &drop_count, &keep_count);
         DropKeep(drop_count, keep_count);
         GOTO(new_pc);
         break;
@@ -2019,6 +2057,18 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
       case Opcode::Nop:
         break;
 
+      case Opcode::Try:
+        ExceptionTag tag;
+        IstreamOffset catch_pc;
+        ReadTryEntryAt(entry, &new_pc, &drop_count, &keep_count);
+        break;
+
+      case Opcode::Throw:
+        break;
+
+      case Opcode::Rethrow:
+        break;
+
       default:
         assert(0);
         break;
@@ -2380,6 +2430,15 @@ void Thread::Trace(Stream* stream) {
       assert(0);
       break;
 
+    case Opcode::Try:
+      break;
+
+    case Opcode::Throw:
+      break;
+
+    case Opcode::Rethrow:
+      break;
+
     default:
       assert(0);
       break;
@@ -2690,7 +2749,7 @@ void Environment::Disassemble(Stream* stream,
             IstreamOffset offset;
             uint32_t drop;
             uint8_t keep;
-            read_table_entry_at(pc, &offset, &drop, &keep);
+            ReadTableEntryAt(pc, &offset, &drop, &keep);
             stream->Writef("  entry %" PRIindex
                            ": offset: %u drop: %u keep: %u\n",
                            i, offset, drop, keep);
@@ -2703,6 +2762,15 @@ void Environment::Disassemble(Stream* stream,
 
         break;
       }
+
+      case Opcode::Try:
+        break;
+
+      case Opcode::Throw:
+        break;
+
+      case Opcode::Rethrow:
+        break;
 
       default:
         assert(0);

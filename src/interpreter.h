@@ -63,6 +63,10 @@ namespace interpreter {
   V(TrapHostResultTypeMismatch, "host result type mismatch")                \
   /* we called an import function, but it didn't complete succesfully */    \
   V(TrapHostTrapped, "host function trapped")                               \
+  /* ran out of catch stack frames */                                       \
+  V(TrapCatchStackExhausted, "catch stack exhausted")                       \
+  /* an exception was thrown, but nobody caught it */                       \
+  V(TrapUncaughtException, "uncaught exception")                            \
   /* we attempted to call a function with the an argument list that doesn't \
    * match the function signature */                                        \
   V(ArgumentTypeMismatch, "argument type mismatch")                         \
@@ -82,7 +86,7 @@ static const IstreamOffset kInvalidIstreamOffset = ~0;
 
 // A table entry has the following packed layout:
 //
-//   struct {
+//   struct TableEntry {
 //     IstreamOffset offset;
 //     uint32_t drop_count;
 //     uint8_t keep_count;
@@ -92,6 +96,25 @@ static const IstreamOffset kInvalidIstreamOffset = ~0;
 #define WABT_TABLE_ENTRY_OFFSET_OFFSET 0
 #define WABT_TABLE_ENTRY_DROP_OFFSET sizeof(uint32_t)
 #define WABT_TABLE_ENTRY_KEEP_OFFSET (sizeof(IstreamOffset) + sizeof(uint32_t))
+
+// A try entry has the following packed layout:
+//
+//   struct TryEntry {
+//     ExceptionTag tag;
+//     IstreamOffset offset;
+//   };
+//
+//   struct TryEntries {
+//     uint32_t count;
+//     TryEntry entries[count];
+//   };
+//
+#define WABT_TRY_ENTRY_SIZE (sizeof(ExceptionTag) + sizeof(IstreamOffset))
+#define WABT_TRY_ENTRIES_COUNT_OFFSET 0
+#define WABT_TRY_ENTRY_TAG_OFFSET(i) \
+  (sizeof(uint32_t) + (i * WABT_TRY_ENTRY_SIZE))
+#define WABT_TRY_ENTRY_OFFSET_OFFSET(i) \
+  (sizeof(uint32_t) + (i * WABT_TRY_ENTRY_SIZE + sizeof(ExceptionTag)))
 
 // NOTE: These enumeration values do not match the standard binary encoding.
 enum class Opcode {
@@ -259,6 +282,27 @@ struct Export {
   std::string name;
   ExternalKind kind;
   Index index;
+};
+
+typedef uint32_t ExceptionTag;
+
+static const ExceptionTag kCatchAllTag = ~0;
+
+struct CatchBlock {
+  CatchBlock() = default;
+  CatchBlock(ExceptionTag tag,
+             IstreamOffset pc,
+             size_t value_stack_top,
+             size_t call_stack_top)
+      : tag(tag),
+        pc(pc),
+        value_stack_top(value_stack_top),
+        call_stack_top(call_stack_top) {}
+
+  ExceptionTag tag = kCatchAllTag;
+  IstreamOffset pc = kInvalidIstreamOffset;
+  size_t value_stack_top;
+  size_t call_stack_top;
 };
 
 class HostImportDelegate {
@@ -516,6 +560,10 @@ class Thread {
   Result PushCall(const uint8_t* pc) WABT_WARN_UNUSED;
   IstreamOffset PopCall();
 
+  Result PushCatch(ExceptionTag tag, IstreamOffset offset) WABT_WARN_UNUSED;
+  Result Unwind(ExceptionTag tag) WABT_WARN_UNUSED;
+  void PopCatch(size_t count);
+
   template <typename MemType, typename ResultType = MemType>
   Result Load(const uint8_t** pc) WABT_WARN_UNUSED;
   template <typename MemType, typename ResultType = MemType>
@@ -544,10 +592,13 @@ class Thread {
   Environment* env_;
   std::vector<Value> value_stack_;
   std::vector<IstreamOffset> call_stack_;
+  std::vector<CatchBlock> catch_stack_;
   Value* value_stack_top_;
   Value* value_stack_end_;
   IstreamOffset* call_stack_top_;
   IstreamOffset* call_stack_end_;
+  CatchBlock* catch_stack_top_;
+  CatchBlock* catch_stack_end_;
   IstreamOffset pc_;
 };
 
