@@ -97,25 +97,6 @@ static const IstreamOffset kInvalidIstreamOffset = ~0;
 #define WABT_TABLE_ENTRY_DROP_OFFSET sizeof(uint32_t)
 #define WABT_TABLE_ENTRY_KEEP_OFFSET (sizeof(IstreamOffset) + sizeof(uint32_t))
 
-// A try entry has the following packed layout:
-//
-//   struct TryEntry {
-//     ExceptionTag tag;
-//     IstreamOffset offset;
-//   };
-//
-//   struct TryEntries {
-//     uint32_t count;
-//     TryEntry entries[count];
-//   };
-//
-#define WABT_TRY_ENTRY_SIZE (sizeof(ExceptionTag) + sizeof(IstreamOffset))
-#define WABT_TRY_ENTRIES_COUNT_OFFSET 0
-#define WABT_TRY_ENTRY_TAG_OFFSET(i) \
-  (sizeof(uint32_t) + (i * WABT_TRY_ENTRY_SIZE))
-#define WABT_TRY_ENTRY_OFFSET_OFFSET(i) \
-  (sizeof(uint32_t) + (i * WABT_TRY_ENTRY_SIZE + sizeof(ExceptionTag)))
-
 // NOTE: These enumeration values do not match the standard binary encoding.
 enum class Opcode {
 #define WABT_OPCODE(rtype, type1, type2, mem_size, prefix, code, Name, text) \
@@ -561,7 +542,7 @@ class Thread {
   IstreamOffset PopCall();
 
   Result PushCatch(ExceptionTag tag, IstreamOffset offset) WABT_WARN_UNUSED;
-  Result Unwind(ExceptionTag tag) WABT_WARN_UNUSED;
+  Result Unwind(ExceptionTag tag, uint32_t value_count) WABT_WARN_UNUSED;
   void PopCatch(size_t count);
 
   template <typename MemType, typename ResultType = MemType>
@@ -592,14 +573,18 @@ class Thread {
   Environment* env_;
   std::vector<Value> value_stack_;
   std::vector<IstreamOffset> call_stack_;
-  std::vector<CatchBlock> catch_stack_;
   Value* value_stack_top_;
   Value* value_stack_end_;
   IstreamOffset* call_stack_top_;
   IstreamOffset* call_stack_end_;
+  IstreamOffset pc_;
+
+  // Exception handling stuff.
+  std::vector<CatchBlock> catch_stack_;
   CatchBlock* catch_stack_top_;
   CatchBlock* catch_stack_end_;
-  IstreamOffset pc_;
+  std::vector<Value> exception_values_;
+  ExceptionTag exception_tag_;
 };
 
 bool IsCanonicalNan(uint32_t f32_bits);

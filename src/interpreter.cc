@@ -92,9 +92,9 @@ Thread::Thread(Environment* env, const Options& options)
       value_stack_end_(value_stack_.data() + value_stack_.size()),
       call_stack_top_(call_stack_.data()),
       call_stack_end_(call_stack_.data() + call_stack_.size()),
+      pc_(options.pc),
       catch_stack_top_(catch_stack_.data()),
-      catch_stack_end_(catch_stack_.data() + catch_stack_.size()),
-      pc_(options.pc) {}
+      catch_stack_end_(catch_stack_.data() + catch_stack_.size()) {}
 
 FuncSignature::FuncSignature(Index param_count,
                              Type* param_types,
@@ -611,13 +611,6 @@ static WABT_INLINE void ReadTableEntryAt(const uint8_t* pc,
   *out_keep = *(pc + WABT_TABLE_ENTRY_KEEP_OFFSET);
 }
 
-static WABT_INLINE void ReadTryEntryAt(const uint8_t* pc,
-                                       ExceptionTag* out_tag,
-                                       IstreamOffset* out_offset) {
-  *out_tag = read_u32_at(pc + WABT_TRY_ENTRY_TAG_OFFSET);
-  *out_offset = read_u32_at(pc + WABT_TRY_ENTRY_OFFSET_OFFSET);
-}
-
 Memory* Thread::ReadMemory(const uint8_t** pc) {
   Index memory_index = read_u32(pc);
   return &env_->memories_[memory_index];
@@ -662,9 +655,11 @@ ValueTypeRep<T> Thread::PopRep() {
 }
 
 void Thread::DropKeep(uint32_t drop_count, uint8_t keep_count) {
-  assert(keep_count <= 1);
-  if (keep_count == 1)
-    Pick(drop_count + 1) = Top();
+  assert(value_stack_.data() + drop_count + keep_count <= value_stack_top_);
+
+  for (uint8_t i = keep_count; i > 0; --i)
+    Pick(drop_count + i) = Pick(i);
+
   value_stack_top_ -= drop_count;
 }
 
@@ -686,7 +681,7 @@ Result Thread::PushCatch(ExceptionTag tag, IstreamOffset offset)  {
   return Result::Ok;
 }
 
-Result Thread::Unwind(ExceptionTag tag)  {
+Result Thread::Unwind(ExceptionTag tag, uint32_t value_count)  {
   while (catch_stack_top_ > catch_stack_.data()) {
     CatchBlock block = *--catch_stack_top_;
     if (block.tag != tag && block.tag != kCatchAllTag)
@@ -694,10 +689,26 @@ Result Thread::Unwind(ExceptionTag tag)  {
 
     // Found a matching tag.
     pc_ = block.pc;
-    assert(value_stack_.data() + block.value_stack_top < value_stack_top_);
     assert(call_stack_.data() + block.call_stack_top < call_stack_top_);
-    value_stack_top_ = value_stack_.data() + block.value_stack_top;
     call_stack_top_ = call_stack_.data() + block.call_stack_top;
+
+    assert(value_stack_.data() + block.value_stack_top < value_stack_top_);
+
+    if (block.tag == kCatchAllTag) {
+      // CatchAll can't use the exception values, but the exception could be
+      // rethrown to a catch handler that can, so we have to stash the values.
+      exception_tag_ = tag;
+      exception_values_.resize(value_count);
+      for (uint32_t i = value_count; i > 0; --i) {
+        exception_values_[i - 1] = Pick(i);
+      }
+      value_stack_top_ = value_stack_.data() + block.value_stack_top;
+    } else {
+      uint32_t drop_count =
+          (value_stack_top_ - value_stack_.data()) - block.value_stack_top;
+      DropKeep(drop_count, value_count);
+    }
+
     return Result::Ok;
   }
 
@@ -2057,17 +2068,31 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
       case Opcode::Nop:
         break;
 
-      case Opcode::Try:
-        ExceptionTag tag;
-        IstreamOffset catch_pc;
-        ReadTryEntryAt(entry, &new_pc, &drop_count, &keep_count);
+      case Opcode::Try: {
+        uint32_t catch_count = read_u32(&pc);
+        IstreamOffset table_offset = read_u32(&pc);
+        for (uint32_t i = 0; i < catch_count; ++i) {
+          ExceptionTag tag = read_u32_at(table_offset + i * 2*sizeof(uint32_t));
+          IstreamOffset catch_pc = read_u32_at(
+              table_offset + i * 2 * sizeof(uint32_t) + sizeof(uint32_t));
+          CHECK_TRAP(PushCatch(tag, catch_pc));
+        }
         break;
+      }
 
-      case Opcode::Throw:
+      case Opcode::Throw: {
+        ExceptionTag tag = read_u32(&pc);
+        uint32_t value_count = read_u32(&pc);
+        CHECK_TRAP(Unwind(tag, value_count));
         break;
+      }
 
-      case Opcode::Rethrow:
+      case Opcode::Rethrow: {
+        for (uint32_t i = 0; i < exception_values_.size(); ++i)
+          CHECK_TRAP(Push(exception_values_[i]));
+        CHECK_TRAP(Unwind(exception_tag_, exception_values_.size()));
         break;
+      }
 
       default:
         assert(0);
