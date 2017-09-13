@@ -469,14 +469,9 @@ void BinaryWriter::WriteExpr(const Module* module,
       WriteOpcode(stream_, Opcode::End);
       break;
     }
-    case ExprType::Load: {
-      auto* load_expr = cast<LoadExpr>(expr);
-      WriteOpcode(stream_, load_expr->opcode);
-      Address align = load_expr->opcode.GetAlignment(load_expr->align);
-      stream_->WriteU8(log2_u32(align), "alignment");
-      WriteU32Leb128(stream_, load_expr->offset, "load offset");
+    case ExprType::Load:
+      WriteLoadStoreExpr<LoadExpr>(module, func, expr, "load offset");
       break;
-    }
     case ExprType::Loop:
       WriteOpcode(stream_, Opcode::Loop);
       write_inline_signature_type(stream_, cast<LoopExpr>(expr)->block.sig);
@@ -509,14 +504,9 @@ void BinaryWriter::WriteExpr(const Module* module,
       WriteU32Leb128(stream_, index, "local index");
       break;
     }
-    case ExprType::Store: {
-      auto* store_expr = cast<StoreExpr>(expr);
-      WriteOpcode(stream_, store_expr->opcode);
-      Address align = store_expr->opcode.GetAlignment(store_expr->align);
-      stream_->WriteU8(log2_u32(align), "alignment");
-      WriteU32Leb128(stream_, store_expr->offset, "store offset");
+    case ExprType::Store:
+      WriteLoadStoreExpr<StoreExpr>(module, func, expr, "store offset");
       break;
-    }
     case ExprType::TeeLocal: {
       Index index = GetLocalIndex(func, cast<TeeLocalExpr>(expr)->var);
       WriteOpcode(stream_, Opcode::TeeLocal);
