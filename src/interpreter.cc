@@ -590,6 +590,16 @@ Memory* Thread::ReadMemory(const uint8_t** pc) {
   return &env_->memories_[memory_index];
 }
 
+template <typename MemType>
+Result Thread::GetAccessAddress(const uint8_t** pc, void** out_address) {
+  Memory* memory = ReadMemory(pc);
+  uint64_t offset = static_cast<uint64_t>(Pop<uint32_t>()) + ReadU32(pc);
+  TRAP_IF(offset + sizeof(MemType) > memory->data.size(),
+          MemoryAccessOutOfBounds);
+  *out_address = memory->data.data() + static_cast<IstreamOffset>(offset);
+  return Result::Ok;
+}
+
 Value& Thread::Top() {
   return Pick(1);
 }
@@ -645,6 +655,18 @@ IstreamOffset Thread::PopCall() {
   return *--call_stack_top_;
 }
 
+template <typename T>
+T LoadFromMemory(const void* src) {
+  T result;
+  memcpy(&result, src, sizeof(T));
+  return result;
+}
+
+template <typename T>
+void StoreToMemory(void* dst, T value) {
+  memcpy(dst, &value, sizeof(T));
+}
+
 template <typename MemType, typename ResultType>
 Result Thread::Load(const uint8_t** pc) {
   typedef typename ExtendMemType<ResultType, MemType>::type ExtendedType;
@@ -652,27 +674,46 @@ Result Thread::Load(const uint8_t** pc) {
                     std::is_floating_point<ExtendedType>::value,
                 "Extended type should be float iff MemType is float");
 
-  Memory* memory = ReadMemory(pc);
-  uint64_t offset = static_cast<uint64_t>(Pop<uint32_t>()) + ReadU32(pc);
-  MemType value;
-  TRAP_IF(offset + sizeof(value) > memory->data.size(),
-          MemoryAccessOutOfBounds);
-  void* src = memory->data.data() + static_cast<IstreamOffset>(offset);
-  memcpy(&value, src, sizeof(value));
+  void* src;
+  CHECK_TRAP(GetAccessAddress<MemType>(pc, &src));
+  auto value = LoadFromMemory<MemType>(src);
   return Push<ResultType>(static_cast<ExtendedType>(value));
 }
 
 template <typename MemType, typename ResultType>
 Result Thread::Store(const uint8_t** pc) {
   typedef typename WrapMemType<ResultType, MemType>::type WrappedType;
-  Memory* memory = ReadMemory(pc);
   WrappedType value = PopRep<ResultType>();
-  uint64_t offset = static_cast<uint64_t>(Pop<uint32_t>()) + ReadU32(pc);
-  TRAP_IF(offset + sizeof(value) > memory->data.size(),
-          MemoryAccessOutOfBounds);
-  void* dst = memory->data.data() + static_cast<IstreamOffset>(offset);
-  memcpy(dst, &value, sizeof(value));
+  void* dst;
+  CHECK_TRAP(GetAccessAddress<MemType>(pc, &dst));
+  StoreToMemory(dst, value);
   return Result::Ok;
+}
+
+template <typename MemType, typename ResultType>
+Result Thread::AtomicRmw(BinopFunc<ResultType, ResultType> func,
+                         const uint8_t** pc) {
+  typedef typename ExtendMemType<ResultType, MemType>::type ExtendedType;
+  MemType rhs = PopRep<ResultType>();
+  void* addr;
+  CHECK_TRAP(GetAccessAddress<MemType>(pc, &addr));
+  auto read = LoadFromMemory<MemType>(addr);
+  StoreToMemory(addr, func(read, rhs));
+  return Push<ResultType>(static_cast<ExtendedType>(read));
+}
+
+template <typename MemType, typename ResultType>
+Result Thread::AtomicRmwCmpxchg(const uint8_t** pc) {
+  typedef typename ExtendMemType<ResultType, MemType>::type ExtendedType;
+  MemType expect = PopRep<ResultType>();
+  MemType replace = PopRep<ResultType>();
+  void* addr;
+  CHECK_TRAP(GetAccessAddress<MemType>(pc, &addr));
+  auto read = LoadFromMemory<MemType>(addr);
+  if (read == expect) {
+    StoreToMemory(addr, replace);
+  }
+  return Push<ResultType>(static_cast<ExtendedType>(read));
 }
 
 template <typename R, typename T>
@@ -1056,6 +1097,12 @@ ValueTypeRep<T> IntExtendS(ValueTypeRep<T> v_rep) {
   return ToRep(static_cast<TS>(Bitcast<E>(static_cast<EU>(v_rep))));
 }
 
+// i{32,64}.atomic.rmw(8,16,32}_u.xchg
+template <typename T>
+ValueTypeRep<T> Xchg(ValueTypeRep<T> lhs_rep, ValueTypeRep<T> rhs_rep) {
+  return rhs_rep;
+}
+
 bool Environment::FuncSignaturesAreEqual(Index sig_index_0,
                                          Index sig_index_1) const {
   if (sig_index_0 == sig_index_1)
@@ -1306,6 +1353,7 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
         CHECK_TRAP(Load<int8_t, uint32_t>(&pc));
         break;
 
+      case Opcode::I32AtomicLoad8U:
       case Opcode::I32Load8U:
         CHECK_TRAP(Load<uint8_t, uint32_t>(&pc));
         break;
@@ -1314,6 +1362,7 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
         CHECK_TRAP(Load<int16_t, uint32_t>(&pc));
         break;
 
+      case Opcode::I32AtomicLoad16U:
       case Opcode::I32Load16U:
         CHECK_TRAP(Load<uint16_t, uint32_t>(&pc));
         break;
@@ -1322,6 +1371,7 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
         CHECK_TRAP(Load<int8_t, uint64_t>(&pc));
         break;
 
+      case Opcode::I64AtomicLoad8U:
       case Opcode::I64Load8U:
         CHECK_TRAP(Load<uint8_t, uint64_t>(&pc));
         break;
@@ -1330,6 +1380,7 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
         CHECK_TRAP(Load<int16_t, uint64_t>(&pc));
         break;
 
+      case Opcode::I64AtomicLoad16U:
       case Opcode::I64Load16U:
         CHECK_TRAP(Load<uint16_t, uint64_t>(&pc));
         break;
@@ -1338,14 +1389,17 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
         CHECK_TRAP(Load<int32_t, uint64_t>(&pc));
         break;
 
+      case Opcode::I64AtomicLoad32U:
       case Opcode::I64Load32U:
         CHECK_TRAP(Load<uint32_t, uint64_t>(&pc));
         break;
 
+      case Opcode::I32AtomicLoad:
       case Opcode::I32Load:
         CHECK_TRAP(Load<uint32_t>(&pc));
         break;
 
+      case Opcode::I64AtomicLoad:
       case Opcode::I64Load:
         CHECK_TRAP(Load<uint64_t>(&pc));
         break;
@@ -1358,30 +1412,37 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
         CHECK_TRAP(Load<double>(&pc));
         break;
 
+      case Opcode::I32AtomicStore8:
       case Opcode::I32Store8:
         CHECK_TRAP(Store<uint8_t, uint32_t>(&pc));
         break;
 
+      case Opcode::I32AtomicStore16:
       case Opcode::I32Store16:
         CHECK_TRAP(Store<uint16_t, uint32_t>(&pc));
         break;
 
+      case Opcode::I64AtomicStore8:
       case Opcode::I64Store8:
         CHECK_TRAP(Store<uint8_t, uint64_t>(&pc));
         break;
 
+      case Opcode::I64AtomicStore16:
       case Opcode::I64Store16:
         CHECK_TRAP(Store<uint16_t, uint64_t>(&pc));
         break;
 
+      case Opcode::I64AtomicStore32:
       case Opcode::I64Store32:
         CHECK_TRAP(Store<uint32_t, uint64_t>(&pc));
         break;
 
+      case Opcode::I32AtomicStore:
       case Opcode::I32Store:
         CHECK_TRAP(Store<uint32_t>(&pc));
         break;
 
+      case Opcode::I64AtomicStore:
       case Opcode::I64Store:
         CHECK_TRAP(Store<uint64_t>(&pc));
         break;
@@ -1392,6 +1453,66 @@ Result Thread::Run(int num_instructions, IstreamOffset* call_stack_return_top) {
 
       case Opcode::F64Store:
         CHECK_TRAP(Store<double>(&pc));
+        break;
+
+#define ATOMIC_RMW(rmwop, func)                                     \
+  case Opcode::I32AtomicRmw##rmwop:                                 \
+    CHECK_TRAP(AtomicRmw<uint32_t, uint32_t>(func<uint32_t>, &pc)); \
+    break;                                                          \
+  case Opcode::I64AtomicRmw##rmwop:                                 \
+    CHECK_TRAP(AtomicRmw<uint64_t, uint64_t>(func<uint64_t>, &pc)); \
+    break;                                                          \
+  case Opcode::I32AtomicRmw8U##rmwop:                               \
+    CHECK_TRAP(AtomicRmw<uint8_t, uint32_t>(func<uint32_t>, &pc));  \
+    break;                                                          \
+  case Opcode::I32AtomicRmw16U##rmwop:                              \
+    CHECK_TRAP(AtomicRmw<uint16_t, uint32_t>(func<uint32_t>, &pc)); \
+    break;                                                          \
+  case Opcode::I64AtomicRmw8U##rmwop:                               \
+    CHECK_TRAP(AtomicRmw<uint8_t, uint64_t>(func<uint64_t>, &pc));  \
+    break;                                                          \
+  case Opcode::I64AtomicRmw16U##rmwop:                              \
+    CHECK_TRAP(AtomicRmw<uint16_t, uint64_t>(func<uint64_t>, &pc)); \
+    break;                                                          \
+  case Opcode::I64AtomicRmw32U##rmwop:                              \
+    CHECK_TRAP(AtomicRmw<uint32_t, uint64_t>(func<uint64_t>, &pc)); \
+    break /* no semicolon */
+
+        ATOMIC_RMW(Add, Add);
+        ATOMIC_RMW(Sub, Sub);
+        ATOMIC_RMW(And, IntAnd);
+        ATOMIC_RMW(Or, IntOr);
+        ATOMIC_RMW(Xor, IntXor);
+        ATOMIC_RMW(Xchg, Xchg);
+
+#undef ATOMIC_RMW
+
+      case Opcode::I32AtomicRmwCmpxchg:
+        CHECK_TRAP(AtomicRmwCmpxchg<uint32_t, uint32_t>(&pc));
+        break;
+
+      case Opcode::I64AtomicRmwCmpxchg:
+        CHECK_TRAP(AtomicRmwCmpxchg<uint64_t, uint64_t>(&pc));
+        break;
+
+      case Opcode::I32AtomicRmw8UCmpxchg:
+        CHECK_TRAP(AtomicRmwCmpxchg<uint8_t, uint32_t>(&pc));
+        break;
+
+      case Opcode::I32AtomicRmw16UCmpxchg:
+        CHECK_TRAP(AtomicRmwCmpxchg<uint16_t, uint32_t>(&pc));
+        break;
+
+      case Opcode::I64AtomicRmw8UCmpxchg:
+        CHECK_TRAP(AtomicRmwCmpxchg<uint8_t, uint64_t>(&pc));
+        break;
+
+      case Opcode::I64AtomicRmw16UCmpxchg:
+        CHECK_TRAP(AtomicRmwCmpxchg<uint16_t, uint64_t>(&pc));
+        break;
+
+      case Opcode::I64AtomicRmw32UCmpxchg:
+        CHECK_TRAP(AtomicRmwCmpxchg<uint32_t, uint64_t>(&pc));
         break;
 
       case Opcode::CurrentMemory:
