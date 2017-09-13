@@ -333,7 +333,7 @@ void BinaryWriter::WriteLoadStoreExpr(const Module* module,
                                       const Func* func,
                                       const Expr* expr,
                                       const char* desc) {
-  auto* typed_expr = cast<AtomicLoadExpr>(expr);
+  auto* typed_expr = cast<T>(expr);
   WriteOpcode(stream_, typed_expr->opcode);
   Address align = typed_expr->opcode.GetAlignment(typed_expr->align);
   stream_->WriteU8(log2_u32(align), "alignment");
@@ -350,8 +350,8 @@ void BinaryWriter::WriteExpr(const Module* module,
     case ExprType::AtomicRmw:
       WriteLoadStoreExpr<AtomicRmwExpr>(module, func, expr, "memory offset");
       break;
-    case ExprType::AtomicRmwCmpXchg:
-      WriteLoadStoreExpr<AtomicRmwCmpXchgExpr>(module, func, expr,
+    case ExprType::AtomicRmwCmpxchg:
+      WriteLoadStoreExpr<AtomicRmwCmpxchgExpr>(module, func, expr,
                                                "memory offset");
       break;
     case ExprType::AtomicStore:

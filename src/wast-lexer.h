@@ -78,7 +78,7 @@ enum class TokenType {
   AtomicLoad,
   AtomicStore,
   AtomicRmw,
-  AtomicRmwCmpXchg,
+  AtomicRmwCmpxchg,
   Br,
   BrIf,
   BrTable,

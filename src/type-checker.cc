@@ -291,7 +291,7 @@ Result TypeChecker::OnAtomicRmw(Opcode opcode) {
   return CheckOpcode2(opcode);
 }
 
-Result TypeChecker::OnAtomicRmwCmpXchg(Opcode opcode) {
+Result TypeChecker::OnAtomicRmwCmpxchg(Opcode opcode) {
   return CheckOpcode3(opcode);
 }
 

@@ -136,6 +136,18 @@ class BinaryReaderInterpreter : public BinaryReaderNop {
   wabt::Result OnLocalDeclCount(Index count) override;
   wabt::Result OnLocalDecl(Index decl_index, Index count, Type type) override;
 
+  wabt::Result OnAtomicLoadExpr(Opcode opcode,
+                                uint32_t alignment_log2,
+                                Address offset) override;
+  wabt::Result OnAtomicStoreExpr(Opcode opcode,
+                                 uint32_t alignment_log2,
+                                 Address offset) override;
+  wabt::Result OnAtomicRmwExpr(Opcode opcode,
+                               uint32_t alignment_log2,
+                               Address offset) override;
+  wabt::Result OnAtomicRmwCmpxchgExpr(Opcode opcode,
+                                      uint32_t alignment_log2,
+                                      Address offset) override;
   wabt::Result OnBinaryExpr(wabt::Opcode opcode) override;
   wabt::Result OnBlockExpr(Index num_types, Type* sig_types) override;
   wabt::Result OnBrExpr(Index depth) override;
@@ -1125,6 +1137,31 @@ wabt::Result BinaryReaderInterpreter::OnUnaryExpr(wabt::Opcode opcode) {
   CHECK_RESULT(typechecker_.OnUnary(opcode));
   CHECK_RESULT(EmitOpcode(opcode));
   return wabt::Result::Ok;
+}
+
+wabt::Result BinaryReaderInterpreter::OnAtomicLoadExpr(Opcode opcode,
+                                                       uint32_t alignment_log2,
+                                                       Address offset) {
+  return wabt::Result::Error;
+}
+
+wabt::Result BinaryReaderInterpreter::OnAtomicStoreExpr(Opcode opcode,
+                                                        uint32_t alignment_log2,
+                                                        Address offset) {
+  return wabt::Result::Error;
+}
+
+wabt::Result BinaryReaderInterpreter::OnAtomicRmwExpr(Opcode opcode,
+                                                      uint32_t alignment_log2,
+                                                      Address offset) {
+  return wabt::Result::Error;
+}
+
+wabt::Result BinaryReaderInterpreter::OnAtomicRmwCmpxchgExpr(
+    Opcode opcode,
+    uint32_t alignment_log2,
+    Address offset) {
+  return wabt::Result::Error;
 }
 
 wabt::Result BinaryReaderInterpreter::OnBinaryExpr(wabt::Opcode opcode) {

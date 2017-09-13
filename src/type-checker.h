@@ -54,7 +54,7 @@ class TypeChecker {
   Result OnAtomicLoad(Opcode);
   Result OnAtomicStore(Opcode);
   Result OnAtomicRmw(Opcode);
-  Result OnAtomicRmwCmpXchg(Opcode);
+  Result OnAtomicRmwCmpxchg(Opcode);
   Result OnBinary(Opcode);
   Result OnBlock(const TypeVector* sig);
   Result OnBr(Index depth);

@@ -432,12 +432,12 @@ void Validator::CheckExpr(const Expr* expr) {
       break;
     }
 
-    case ExprType::AtomicRmwCmpXchg: {
-      auto cmp_xchg_expr = cast<AtomicRmwCmpXchgExpr>(expr);
-      CheckHasMemory(&cmp_xchg_expr->loc, cmp_xchg_expr->opcode);
-      CheckAtomicAlign(&cmp_xchg_expr->loc, cmp_xchg_expr->align,
-                       get_opcode_natural_alignment(cmp_xchg_expr->opcode));
-      typechecker_.OnAtomicRmwCmpXchg(cmp_xchg_expr->opcode);
+    case ExprType::AtomicRmwCmpxchg: {
+      auto cmpxchg_expr = cast<AtomicRmwCmpxchgExpr>(expr);
+      CheckHasMemory(&cmpxchg_expr->loc, cmpxchg_expr->opcode);
+      CheckAtomicAlign(&cmpxchg_expr->loc, cmpxchg_expr->align,
+                       get_opcode_natural_alignment(cmpxchg_expr->opcode));
+      typechecker_.OnAtomicRmwCmpxchg(cmpxchg_expr->opcode);
       break;
     }
 

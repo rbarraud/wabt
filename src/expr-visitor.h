@@ -80,7 +80,7 @@ class ExprVisitor::Delegate {
   virtual Result OnAtomicLoadExpr(AtomicLoadExpr*) = 0;
   virtual Result OnAtomicStoreExpr(AtomicStoreExpr*) = 0;
   virtual Result OnAtomicRmwExpr(AtomicRmwExpr*) = 0;
-  virtual Result OnAtomicRmwCmpXchgExpr(AtomicRmwCmpXchgExpr*) = 0;
+  virtual Result OnAtomicRmwCmpxchgExpr(AtomicRmwCmpxchgExpr*) = 0;
 };
 
 class ExprVisitor::DelegateNop : public ExprVisitor::Delegate {
@@ -124,7 +124,7 @@ class ExprVisitor::DelegateNop : public ExprVisitor::Delegate {
   Result OnAtomicLoadExpr(AtomicLoadExpr*) override { return Result::Ok; }
   Result OnAtomicStoreExpr(AtomicStoreExpr*) override { return Result::Ok; }
   Result OnAtomicRmwExpr(AtomicRmwExpr*) override { return Result::Ok; }
-  Result OnAtomicRmwCmpXchgExpr(AtomicRmwCmpXchgExpr*) override {
+  Result OnAtomicRmwCmpxchgExpr(AtomicRmwCmpxchgExpr*) override {
     return Result::Ok;
   }
 };

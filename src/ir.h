@@ -117,7 +117,7 @@ enum class ExprType {
   AtomicLoad,
   AtomicStore,
   AtomicRmw,
-  AtomicRmwCmpXchg,
+  AtomicRmwCmpxchg,
   Binary,
   Block,
   Br,
@@ -322,7 +322,7 @@ typedef LoadStoreExpr<ExprType::Store> StoreExpr;
 typedef LoadStoreExpr<ExprType::AtomicLoad> AtomicLoadExpr;
 typedef LoadStoreExpr<ExprType::AtomicStore> AtomicStoreExpr;
 typedef LoadStoreExpr<ExprType::AtomicRmw> AtomicRmwExpr;
-typedef LoadStoreExpr<ExprType::AtomicRmwCmpXchg> AtomicRmwCmpXchgExpr;
+typedef LoadStoreExpr<ExprType::AtomicRmwCmpxchg> AtomicRmwCmpxchgExpr;
 
 struct Exception {
   Exception() = default;

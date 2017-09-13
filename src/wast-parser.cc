@@ -164,7 +164,7 @@ bool IsPlainInstr(TokenType token_type) {
     case TokenType::AtomicLoad:
     case TokenType::AtomicStore:
     case TokenType::AtomicRmw:
-    case TokenType::AtomicRmwCmpXchg:
+    case TokenType::AtomicRmwCmpxchg:
       return true;
     default:
       return false;
@@ -1389,11 +1389,11 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
       break;
     }
 
-    case TokenType::AtomicRmwCmpXchg: {
+    case TokenType::AtomicRmwCmpxchg: {
       Token token = Consume();
       ErrorUnlessOpcodeEnabled(token);
       CHECK_RESULT(
-          ParsePlainLoadStoreInstr<AtomicRmwCmpXchgExpr>(loc, token, out_expr));
+          ParsePlainLoadStoreInstr<AtomicRmwCmpxchgExpr>(loc, token, out_expr));
       break;
     }
 
